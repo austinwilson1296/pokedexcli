@@ -1,66 +1,65 @@
 package pokecache
 
 import (
-	"time"
 	"sync"
+	"time"
 )
 
+// Cache -
+type Cache struct {
+	cache map[string]cacheEntry
+	mux   *sync.Mutex
+}
 
 type cacheEntry struct {
 	createdAt time.Time
 	val       []byte
 }
 
-// Define the Cache struct with a map and mutex
-type Cache struct {
-	entries map[string]cacheEntry 
-	mu      sync.Mutex            
+// NewCache -
+func NewCache(interval time.Duration) Cache {
+	c := Cache{
+		cache: make(map[string]cacheEntry),
+		mux:   &sync.Mutex{},
+	}
+
+	go c.reapLoop(interval)
+
+	return c
 }
 
-
-func NewCache(interval time.Duration) *Cache {
-    // Initialize empty map
-    entries := make(map[string]cacheEntry)
-    
-    // Create new cache with map
-    cache := &Cache{
-        entries: entries,
-        mu: sync.Mutex{},
-    }
-    
-    go cache.reapLoop(interval)
-    // How would you do this?
-    
-    return cache
+// Add -
+func (c *Cache) Add(key string, value []byte) {
+	c.mux.Lock()
+	defer c.mux.Unlock()
+	c.cache[key] = cacheEntry{
+		createdAt: time.Now().UTC(),
+		val:       value,
+	}
 }
 
-
-//TO-DO : Create a cache.Add() method that adds a new entry to the cache. It should take a key (a string) and a val (a []byte).
-
-//TO-DO : Create a cache.Get() method that gets an entry from the cache. It should take a key (a string) and return a []byte and a bool. The bool should be true if the entry was found and false if it wasn't.
-
+// Get -
+func (c *Cache) Get(key string) ([]byte, bool) {
+	c.mux.Lock()
+	defer c.mux.Unlock()
+	val, ok := c.cache[key]
+	return val.val, ok
+}
 
 func (c *Cache) reapLoop(interval time.Duration) {
-    ticker := time.NewTicker(interval)
-    
-    for {
-        select {
-        case <-ticker.C:
-            c.mu.Lock()
-            // For each entry in the cache
-			for key, entry := range c.entries {
-				// time.Since(entry.createdAt) tells us how much time has passed
-				// since this entry was created
-				timePassed := time.Since(entry.createdAt)
-				
-				// if more time has passed than our interval...
-				if timePassed > interval {
-					// delete this entry from the map using the key
-					delete(c.entries, key)
-				}
-			}
-            c.mu.Unlock()
-        }
-    }
+	ticker := time.NewTicker(interval)
+	for range ticker.C {
+		c.reap(time.Now().UTC(), interval)
+	}
+}
+
+func (c *Cache) reap(now time.Time, last time.Duration) {
+	c.mux.Lock()
+	defer c.mux.Unlock()
+	for k, v := range c.cache {
+		if v.createdAt.Before(now.Add(-last)) {
+			delete(c.cache, k)
+		}
+	}
 }
 
